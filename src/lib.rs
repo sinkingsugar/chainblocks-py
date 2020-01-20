@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
 use pyo3::types::PyDict;
 use chainblocks::core::Core;
+use chainblocks::types::BaseArray;
 use chainblocks::types::Types;
 use chainblocks::chainblocksc::CBContext;
 use chainblocks::chainblocksc::CBVar;
@@ -19,9 +20,18 @@ use chainblocks::core::registerBlock;
 use chainblocks::block::Block;
 use chainblocks::core::init;
 
+struct MyTypes(Types);
+
+impl pyo3::FromPyObject<'_> for MyTypes {
+    fn extract(_: &'_ pyo3::types::PyAny)
+               -> std::result::Result<Self, pyo3::PyErr> {
+        unimplemented!()
+    }
+}
+
 struct PyBlock {
-    inputTypes: Types,
-    outputTypes: Types,
+    input_types: Box<Types>,
+    output_types: Box<Types>,
     locals: PyObject,
 }
 
@@ -38,18 +48,31 @@ impl Default for PyBlock {
         }
 
         Self{
-            inputTypes: Types::from(vec![common_type::any()]),
-            outputTypes: Types::from(vec![common_type::any()]),
+            input_types: Box::new(Types::from(vec![common_type::any()])),
+            output_types: Box::new(Types::from(vec![common_type::any()])),
             locals: locals.to_object(py),
         }
     }
 }
 
 impl Block for PyBlock {
-    fn name(&self) -> &str { "Py" }
-    fn inputTypes(&self) -> &Types { &self.inputTypes  }
-    fn outputTypes(&self) -> &Types { &self.outputTypes }
-    fn activate(&self, _context: &CBContext, _input: &CBVar) -> CBVar { CBVar::default() }
+    fn name(&mut self) -> &str { "Py" }
+    fn inputTypes(&mut self) -> &Types {
+        let gil = pyo3::Python::acquire_gil();
+        let py = gil.python();
+        let locals = self.locals.cast_as::<PyDict>(py).unwrap();
+        if locals.contains("inputTypes").unwrap() {
+            let types: MyTypes = locals
+                .get_item("inputTypes")
+                .unwrap()
+                .extract()
+                .unwrap();
+            self.input_types = Box::new(types.0);
+        }
+        &self.input_types
+    }
+    fn outputTypes(&mut self) -> &Types { &self.output_types }
+    fn activate(&mut self, _context: &CBContext, _input: &CBVar) -> CBVar { CBVar::default() }
 }
 
 #[ctor]
