@@ -1,0 +1,16 @@
+[package]
+name = "cbpy"
+version = "0.1.0"
+authors = ["Giovanni Petrantoni <giovanni@fragcolor.xyz>"]
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chainblocks = { path = "../automa/chainblocks-rs" }
+# needs nightly.. cargo +nightly build
+pyo3 = "0.8.5"
+ctor = "0.1.2"
