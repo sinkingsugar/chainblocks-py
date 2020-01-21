@@ -1,3 +1,9 @@
+inputTypes = ["None"]
+outputTypes = ["String"]
+parameters = {}
+
+my_value = "Good jobs"
+
 def setParam(idx, value):
     pass
 
@@ -5,12 +11,6 @@ def getParam(idx):
     return None
 
 def activate(value):
-    return None
+    return "Python string result! " + my_value 
 
-inputTypes = "[(Seq [Int]) (Seq [Float])]"
-outputTypes = "String"
-parameters = "[{Param1 [String Int]}, {Param2 Bool}]"
-setParam = lambda idx, value: setParam(idx, value)
-getParam = lambda idx: getParam(idx)
-activate = lambda value: activate(value)
-
+print("Dummy block loaded!")
