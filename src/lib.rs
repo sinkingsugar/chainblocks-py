@@ -16,9 +16,11 @@ use pyo3::types::PyFloat;
 use pyo3::types::PyString;
 use pyo3::types::PyTuple;
 use pyo3::types::PyModule;
+use pyo3::types::PyList;
 use chainblocks::core::Core;
 use chainblocks::types::BaseArray;
 use chainblocks::types::Types;
+use chainblocks::types::Type;
 use chainblocks::types::Var;
 use chainblocks::types::Context;
 use chainblocks::types::ParameterInfo;
@@ -103,38 +105,54 @@ impl Default for PyBlock {
     }
 }
 
+fn match_type(name: &str) -> Type {
+    match name {
+        "String" => { common_type::string() }
+        "None" => { common_type::none() }
+        "Any" => { common_type::any() }
+        "Int" => { common_type::int() }
+        _ => { unimplemented!(); }
+    }
+}
+
+fn iterate_types(list: &PyList) -> Vec<Type> {
+    let mut types = Vec::<Type>::new();
+    for t in list {
+        if let Ok(type_string) = t.extract::<&str>() {
+            types.push(match_type(type_string));
+        }
+    }
+    types
+}
+
 impl Block for PyBlock {
     fn name(&mut self) -> &str { "Py" }
 
     fn inputTypes(&mut self) -> &Types {
-        // let gil = pyo3::Python::acquire_gil();
-        // let py = gil.python();
-        // let locals = self.locals.cast_as::<PyDict>(py).unwrap();
-        // if locals.contains("inputTypes").unwrap() {
-        //     let types: String = locals
-        //         .get_item("inputTypes")
-        //         .unwrap()
-        //         .extract()
-        //         .unwrap();
-        //     // self.input_types = Box::new(types.0);
-        // }
-        
+        let gil = pyo3::Python::acquire_gil();
+        let py = gil.python();
+        if self.module.is_some() {
+            if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
+                if let Ok(input_types) = module.get("inputTypes") {
+                    if let Ok(ares) = input_types.call1(PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
+                        if let Ok(list) = ares.downcast_ref::<PyList>() {
+                            self.input_types = Box::new(Types::from(iterate_types(list)));
+                        }}}}
+        }       
         &self.input_types
     }
 
     fn outputTypes(&mut self) -> &Types {
-        // let gil = pyo3::Python::acquire_gil();
-        // let py = gil.python();
-        // let locals = self.locals.cast_as::<PyDict>(py).unwrap();
-        // if locals.contains("outputTypes").unwrap() {
-        //     let types: String = locals
-        //         .get_item("outputTypes")
-        //         .unwrap()
-        //         .extract()
-        //         .unwrap();
-        //     // self.output_types = Box::new(types.0);
-        // }
-        
+        let gil = pyo3::Python::acquire_gil();
+        let py = gil.python();
+        if self.module.is_some() {
+            if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
+                if let Ok(output_types) = module.get("outputTypes") {
+                    if let Ok(ares) = output_types.call1(PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
+                        if let Ok(list) = ares.downcast_ref::<PyList>() {
+                            self.output_types = Box::new(Types::from(iterate_types(list)));
+                        }}}}
+        }       
         &self.output_types
     }
 

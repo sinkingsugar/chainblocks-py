@@ -11,10 +11,10 @@ if not 'init_done' in locals():
 my_value = "Good jobs"
 
 def inputTypes(self):
-    return ["None"]
+    return ["Int"]
 
 def outputTypes(self):
-    return ["String"]
+    return ["Int"]
 
 def parameters(self):
     return [{
@@ -30,10 +30,6 @@ def getParam(self, idx):
     return None
 
 def activate(self, value):
-    if "current" not in self:
-        self["current"] = 0
-    v = self["current"] + value
-    self["current"] = v
-    return "Python string result! " + my_value + " " + str(v)
+    return value + 1
 
     
