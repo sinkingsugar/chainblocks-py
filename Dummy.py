@@ -11,17 +11,13 @@ if not 'init_done' in locals():
 my_value = "Good jobs"
 
 def inputTypes(self):
-    return ["None"]
+    return ["Int"]
 
 def outputTypes(self):
     return ["String"]
 
 def parameters(self):
-    return [{
-        "name": "Param1",
-        "help": "My Param number 1.",
-        "types": ["Int"]
-        }]
+    return [("Param1", "My Param number 1.", ["Int"])]
 
 def setParam(self, idx, value):
     pass

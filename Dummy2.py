@@ -10,6 +10,9 @@ if not 'init_done' in locals():
 
 my_value = "Good jobs"
 
+def setup(self):
+    self["inc"] = 1
+
 def inputTypes(self):
     return ["Int"]
 
@@ -17,19 +20,16 @@ def outputTypes(self):
     return ["Int"]
 
 def parameters(self):
-    return [{
-        "name": "Param1",
-        "help": "My Param number 1.",
-        "types": ["Int"]
-        }]
+    return [("Inc", "The increment", ["Int"])]
 
 def setParam(self, idx, value):
-    pass
+    if idx == 1:
+        self["inc"] = value
 
 def getParam(self, idx):
     return None
 
 def activate(self, value):
-    return value + 1
+    return value + self["inc"]
 
     

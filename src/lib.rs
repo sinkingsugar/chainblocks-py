@@ -55,7 +55,7 @@ impl pyo3::FromPyObject<'_> for MyVar {
             let cbstr = value.as_ptr() as chainblocks::types::String;
             Ok(MyVar(Var::from(cbstr)))
         } else {
-            unimplemented!()
+            Ok(MyVar(Var::from(())))
         }
     }
 }
@@ -63,7 +63,11 @@ impl pyo3::FromPyObject<'_> for MyVar {
 impl pyo3::ToPyObject for MyVarRef<'_> {
     fn to_object(&self, py: pyo3::Python<'_>) -> pyo3::PyObject {
         if let Ok(v) = i64::try_from(self.0) {
-           v.to_object(py)
+            v.to_object(py)
+        } else if let Ok(v) = String::try_from(self.0) {
+            v.to_object(py)
+        } else if let Ok(v) = f64::try_from(self.0) {
+            v.to_object(py)
         } else {
             py.None()
         }
@@ -115,14 +119,32 @@ fn match_type(name: &str) -> Type {
     }
 }
 
-fn iterate_types(list: &PyList) -> Vec<Type> {
+fn iterate_types(list: Vec<&str>) -> Vec<Type> {
     let mut types = Vec::<Type>::new();
-    for t in list {
-        if let Ok(type_string) = t.extract::<&str>() {
-            types.push(match_type(type_string));
-        }
+    for type_name in list {
+        types.push(match_type(type_name));      
     }
     types
+}
+
+fn iterate_params(list: &PyList) -> Vec<ParameterInfo> {
+    let mut params = Vec::<ParameterInfo>::new();
+    // always inject this as first param
+    params.push(ParameterInfo::from(
+                    (
+                        "Script",
+                        "The relative path to the python's block script.",
+                        Types::from(vec![common_type::string()])
+                    )));
+    for t in list {
+        if let Ok(param_info) = t.extract::<(&str, &str, Vec<&str>)>() {
+            params.push(ParameterInfo::from((
+                param_info.0,
+                param_info.1,
+                Types::from(iterate_types(param_info.2)))));
+        }
+    }
+    params
 }
 
 impl Block for PyBlock {
@@ -135,7 +157,7 @@ impl Block for PyBlock {
             if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
                 if let Ok(input_types) = module.get("inputTypes") {
                     if let Ok(ares) = input_types.call1(PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
-                        if let Ok(list) = ares.downcast_ref::<PyList>() {
+                        if let Ok(list) = ares.extract::<Vec<&str>>() {
                             self.input_types = Box::new(Types::from(iterate_types(list)));
                         }}}}
         }       
@@ -149,7 +171,7 @@ impl Block for PyBlock {
             if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
                 if let Ok(output_types) = module.get("outputTypes") {
                     if let Ok(ares) = output_types.call1(PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
-                        if let Ok(list) = ares.downcast_ref::<PyList>() {
+                        if let Ok(list) = ares.extract::<Vec<&str>>() {
                             self.output_types = Box::new(Types::from(iterate_types(list)));
                         }}}}
         }       
@@ -157,6 +179,16 @@ impl Block for PyBlock {
     }
 
     fn parameters(&mut self) -> Option<&Parameters> {
+        let gil = pyo3::Python::acquire_gil();
+        let py = gil.python();
+        if self.module.is_some() {
+            if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
+                if let Ok(output_types) = module.get("parameters") {
+                    if let Ok(ares) = output_types.call1(PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
+                        if let Ok(list) = ares.downcast_ref::<PyList>() {
+                            self.parameters = Box::new(Parameters::from(iterate_params(list)));
+                        }}}}
+        }       
         Some(&self.parameters)
     }
 
@@ -188,6 +220,13 @@ impl Block for PyBlock {
                         if let Ok(activation) = module.get("activate") {
                             self.activate = Some(PyObject::from(activation));
                         }
+                        // also call setup here
+                        if let Ok(output_types) = module.get("setup") {
+                            if let Err(e) = output_types.call1(
+                                PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
+                                e.print(py);
+                            }
+                        }
                         self.module = Some(module.to_object(py));
                     }
                 }
@@ -195,7 +234,21 @@ impl Block for PyBlock {
                 self.script_path = Some(vstr);
             }
             _ => {
-                // idx-- and send to py side
+                // send to py side
+                if self.module.is_some() {
+                    if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
+                        if let Ok(output_types) = module.get("setParam") {
+                            let arg = MyVarRef(value);
+                            if let Err(e) = output_types.call1(
+                                PyTuple::new(py, vec![
+                                    self.instance.clone_ref(py),
+                                    idx.to_object(py),
+                                    arg.to_object(py)])) {
+                                e.print(py);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
