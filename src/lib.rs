@@ -11,9 +11,11 @@ use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
 use pyo3::types::PyDict;
 use pyo3::types::PyInt;
+use pyo3::types::PyLong;
 use pyo3::types::PyFloat;
 use pyo3::types::PyString;
 use pyo3::types::PyTuple;
+use pyo3::types::PyModule;
 use chainblocks::core::Core;
 use chainblocks::types::BaseArray;
 use chainblocks::types::Types;
@@ -32,11 +34,15 @@ use std::convert::TryFrom;
 use std::ffi::CString;
 
 struct MyVar(Var);
+struct MyVarRef<'a>(&'a Var);
 
 impl pyo3::FromPyObject<'_> for MyVar {
     fn extract(o: &'_ pyo3::types::PyAny)
                -> std::result::Result<Self, pyo3::PyErr> {
         if let Ok(v) = o.downcast_ref::<PyInt>() {
+            let value: i64 = v.extract().unwrap();
+            Ok(MyVar(Var::from(value)))
+        } else if let Ok(v) = o.downcast_ref::<PyLong>() {
             let value: i64 = v.extract().unwrap();
             Ok(MyVar(Var::from(value)))
         } else if let Ok(v) = o.downcast_ref::<PyFloat>() {
@@ -52,11 +58,21 @@ impl pyo3::FromPyObject<'_> for MyVar {
     }
 }
 
+impl pyo3::ToPyObject for MyVarRef<'_> {
+    fn to_object(&self, py: pyo3::Python<'_>) -> pyo3::PyObject {
+        if let Ok(v) = i64::try_from(self.0) {
+           v.to_object(py)
+        } else {
+            py.None()
+        }
+    }
+}
+
 struct PyBlock {
     input_types: Box<Types>,
     output_types: Box<Types>,
     parameters: Box<Parameters>,
-    locals: PyObject,
+    module: Option<PyObject>,
     activate: Option<PyObject>,
     result: Option<PyObject>,
     script_path: Option<CString>,
@@ -64,9 +80,6 @@ struct PyBlock {
 
 impl Default for PyBlock {
     fn default() -> Self {
-        let gil = pyo3::Python::acquire_gil();
-        let py = gil.python();
-        let locals = PyDict::new(py);
         Self{
             input_types: Box::new(Types::from(vec![common_type::any()])),
             output_types: Box::new(Types::from(vec![common_type::any()])),
@@ -78,7 +91,7 @@ impl Default for PyBlock {
                         Types::from(vec![common_type::string()])
                     ))
             ])),    
-            locals: locals.to_object(py),
+            module: None,
             activate: None,
             result: None,
             script_path: None,
@@ -128,23 +141,32 @@ impl Block for PyBlock {
     fn setParam(&mut self, idx: i32, value: &Var) {
         let gil = pyo3::Python::acquire_gil();
         let py = gil.python();
-        let locals = self.locals.cast_as::<PyDict>(py).unwrap();
         match idx {
             0 => {
-                // script name fs
                 let path = Path::new(getRootPath());
                 let vstr = CString::try_from(value).unwrap();
-                let script = Path::new(vstr.to_str().unwrap());
+                let script_name = vstr.to_str().unwrap();
+                let script = Path::new(script_name);
                 let fullpath = path.join(script);
                 let code = fs::read_to_string(fullpath).unwrap();
-                if let Err(e) = py.run(&code,
-                                       None,
-                                       Some(locals)) {
-                    e.print(py);
-                } else {
-                    if locals.contains("activate").unwrap() {
-                        let lmbd = locals.get_item("activate").unwrap();
-                        self.activate = Some(PyObject::from(lmbd));
+                let mres = PyModule::from_code(
+                    py,
+                    &code,
+                    &script_name,
+                    &script
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap());
+                match mres {
+                    Err(e) => {
+                        e.print(py);
+                    }
+                    Ok(module) => {
+                        if let Ok(activation) = module.get("activate") {
+                            self.activate = Some(PyObject::from(activation));
+                        }
+                        self.module = Some(module.to_object(py));
                     }
                 }
                 // finally store the string
@@ -166,9 +188,9 @@ impl Block for PyBlock {
     fn activate(&mut self, _context: &Context, input: &Var) -> Var {
         let gil = pyo3::Python::acquire_gil();
         let py = gil.python();
-        let args = MyVar(*input);
+        let arg = MyVarRef(input);
         let call =  self.activate.as_ref().unwrap();
-        let ares = call.call1(py, PyTuple::new(py, vec![PyTuple::empty(py)])); //TODO
+        let ares = call.call1(py, PyTuple::new(py, vec![arg]));
         match ares {
             Ok(output) => {
                 // convert/extract
