@@ -73,6 +73,7 @@ struct PyBlock {
     output_types: Box<Types>,
     parameters: Box<Parameters>,
     module: Option<PyObject>,
+    instance: PyObject,
     activate: Option<PyObject>,
     result: Option<PyObject>,
     script_path: Option<CString>,
@@ -80,6 +81,8 @@ struct PyBlock {
 
 impl Default for PyBlock {
     fn default() -> Self {
+        let gil = pyo3::Python::acquire_gil();
+        let py = gil.python();
         Self{
             input_types: Box::new(Types::from(vec![common_type::any()])),
             output_types: Box::new(Types::from(vec![common_type::any()])),
@@ -90,8 +93,9 @@ impl Default for PyBlock {
                         "The relative path to the python's block script.",
                         Types::from(vec![common_type::string()])
                     ))
-            ])),    
+            ])),
             module: None,
+            instance: PyDict::new(py).to_object(py),
             activate: None,
             result: None,
             script_path: None,
@@ -190,7 +194,7 @@ impl Block for PyBlock {
         let py = gil.python();
         let arg = MyVarRef(input);
         let call =  self.activate.as_ref().unwrap();
-        let ares = call.call1(py, PyTuple::new(py, vec![arg]));
+        let ares = call.call1(py, PyTuple::new(py, vec![self.instance.clone_ref(py), arg.to_object(py)]));
         match ares {
             Ok(output) => {
                 // convert/extract
