@@ -63,9 +63,11 @@ impl pyo3::FromPyObject<'_> for MyVar {
             let value: f64 = v.extract().unwrap();
             Ok(MyVar(OwnedVar::from(value)))
         } else if let Ok(v) = o.downcast_ref::<PyString>() {
-            let value: &[u8] = v.as_bytes().unwrap();
-            let cstr = CStr::from_bytes_with_nul(value).unwrap();
-            Ok(MyVar(OwnedVar::from(cstr)))
+            unsafe {
+                let value: &[u8] = v.as_bytes().unwrap();
+                let cstr = CStr::from_bytes_with_nul_unchecked(value);
+                Ok(MyVar(OwnedVar::from(cstr)))
+            }
         } else if let Ok(v) = o.downcast_ref::<PyBool>() {
             let value: bool = v.extract().unwrap();
             Ok(MyVar(OwnedVar::from(value)))
@@ -109,7 +111,6 @@ struct PyBlock {
     module: Option<PyObject>,
     instance: PyObject,
     activate: Option<PyObject>,
-    result: Option<PyObject>,
     output: MyVar,
     script_path: Option<CString>,
 }
@@ -132,7 +133,6 @@ impl Default for PyBlock {
             module: None,
             instance: PyDict::new(py).to_object(py),
             activate: None,
-            result: None,
             output: MyVar(OwnedVar::from(())),
             script_path: None,
         }
@@ -311,9 +311,6 @@ impl Block for PyBlock {
             Ok(output) => {
                 // convert/extract
                 self.output = output.extract(py).unwrap();
-                // store result to keep refs
-                // also will dec ref old one
-                self.result = Some(output);
                 (self.output.0).0
             }
             Err(err) => {
