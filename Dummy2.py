@@ -17,7 +17,8 @@ def inputTypes(self):
     return ["Int"]
 
 def outputTypes(self):
-    return ["Int"]
+    # seq of Ints
+    return [["Int"]]
 
 def parameters(self):
     return [("Inc", "The increment", ["Int"])]
@@ -27,9 +28,10 @@ def setParam(self, idx, value):
         self["inc"] = value
 
 def getParam(self, idx):
-    return None
+    if idx == 1:
+        return self["inc"]
 
 def activate(self, value):
-    return value + self["inc"]
+    return [value + self["inc"], value ** 2 + self["inc"]]
 
     

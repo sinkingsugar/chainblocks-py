@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+#![feature(vec_into_raw_parts)]
 
 #[macro_use]
 
@@ -9,6 +10,7 @@ extern crate ctor;
 use ctor::ctor;
 use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
+use pyo3::types::PyAny;
 use pyo3::types::PyDict;
 use pyo3::types::PyInt;
 use pyo3::types::PyLong;
@@ -17,6 +19,7 @@ use pyo3::types::PyString;
 use pyo3::types::PyTuple;
 use pyo3::types::PyModule;
 use pyo3::types::PyList;
+use pyo3::types::PyBool;
 use chainblocks::core::Core;
 use chainblocks::types::BaseArray;
 use chainblocks::types::Types;
@@ -35,7 +38,14 @@ use std::fs;
 use std::convert::TryFrom;
 use std::ffi::CString;
 
+fn convert_using_into_raw_parts<T, U>(v: Vec<T>) -> Vec<U> {
+    let (ptr, len, cap) = v.into_raw_parts();
+    unsafe { Vec::from_raw_parts(ptr as *mut U, len, cap) }
+}
+
+#[repr(transparent)] // force it same size of original
 struct MyVar(Var);
+#[repr(transparent)] // force it same size of original
 struct MyVarRef<'a>(&'a Var);
 
 impl pyo3::FromPyObject<'_> for MyVar {
@@ -54,6 +64,13 @@ impl pyo3::FromPyObject<'_> for MyVar {
             let value: &[u8] = v.as_bytes().unwrap();
             let cbstr = value.as_ptr() as chainblocks::types::String;
             Ok(MyVar(Var::from(cbstr)))
+        } else if let Ok(v) = o.downcast_ref::<PyBool>() {
+            let value: bool = v.extract().unwrap();
+            Ok(MyVar(Var::from(value)))
+        } else if let Ok(v) = o.downcast_ref::<PyList>() {
+            let value: Vec<MyVar> = v.extract().unwrap();
+            let vec = convert_using_into_raw_parts::<MyVar, Var>(value);
+            Ok(MyVar(Var::from(vec)))
         } else {
             Ok(MyVar(Var::from(())))
         }
@@ -68,6 +85,15 @@ impl pyo3::ToPyObject for MyVarRef<'_> {
             v.to_object(py)
         } else if let Ok(v) = f64::try_from(self.0) {
             v.to_object(py)
+        } else if let Ok(v) = bool::try_from(self.0) {
+            v.to_object(py)
+        } else if let Ok(v) = Vec::<Var>::try_from(self.0) {
+            let mut pov = Vec::<PyObject>::new();
+            for var in v {
+                let mv = MyVarRef(&var);
+                pov.push(mv.to_object(py));
+            }
+            PyList::new(py, pov).to_object(py)
         } else {
             py.None()
         }
@@ -90,14 +116,14 @@ impl Default for PyBlock {
         let gil = pyo3::Python::acquire_gil();
         let py = gil.python();
         Self{
-            input_types: Box::new(Types::from(vec![common_type::any()])),
-            output_types: Box::new(Types::from(vec![common_type::any()])),
+            input_types: Box::new(Types::from(vec![common_type::any])),
+            output_types: Box::new(Types::from(vec![common_type::any])),
             parameters: Box::new(Parameters::from(vec![
                 ParameterInfo::from(
                     (
                         "Script",
                         "The relative path to the python's block script.",
-                        Types::from(vec![common_type::string()])
+                        Types::from(vec![common_type::string])
                     ))
             ])),
             module: None,
@@ -109,17 +135,28 @@ impl Default for PyBlock {
     }
 }
 
-fn match_type(name: &str) -> Type {
-    match name {
-        "String" => { common_type::string() }
-        "None" => { common_type::none() }
-        "Any" => { common_type::any() }
-        "Int" => { common_type::int() }
-        _ => { unimplemented!(); }
+fn match_type(t: &PyAny) -> Type {
+    if let Ok(name) = t.extract::<&str>() {
+        match name {
+            "String" => { common_type::string }
+            "None" => { common_type::none }
+            "Any" => { common_type::any }
+            "Int" => { common_type::int }
+            _=> { unimplemented!(); }
+        }
+    } else if let Ok(list) = t.extract::<Vec<&str>>() {
+        match list.as_slice() {
+            ["Int"] => { common_type::ints }
+            _ => { unimplemented!(); }
+        }
+    } else if let Ok(_list) = t.extract::<Vec<&PyAny>>() {
+        unimplemented!();
+    } else {
+        unimplemented!();
     }
 }
 
-fn iterate_types(list: Vec<&str>) -> Vec<Type> {
+fn iterate_types(list: Vec<&PyAny>) -> Vec<Type> {
     let mut types = Vec::<Type>::new();
     for type_name in list {
         types.push(match_type(type_name));      
@@ -131,13 +168,13 @@ fn iterate_params(list: &PyList) -> Vec<ParameterInfo> {
     let mut params = Vec::<ParameterInfo>::new();
     // always inject this as first param
     params.push(ParameterInfo::from(
-                    (
-                        "Script",
-                        "The relative path to the python's block script.",
-                        Types::from(vec![common_type::string()])
-                    )));
+        (
+            "Script",
+            "The relative path to the python's block script.",
+            Types::from(vec![common_type::string])
+        )));
     for t in list {
-        if let Ok(param_info) = t.extract::<(&str, &str, Vec<&str>)>() {
+        if let Ok(param_info) = t.extract::<(&str, &str, Vec<&PyAny>)>() {
             params.push(ParameterInfo::from((
                 param_info.0,
                 param_info.1,
@@ -157,7 +194,7 @@ impl Block for PyBlock {
             if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
                 if let Ok(input_types) = module.get("inputTypes") {
                     if let Ok(ares) = input_types.call1(PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
-                        if let Ok(list) = ares.extract::<Vec<&str>>() {
+                        if let Ok(list) = ares.extract::<Vec<&PyAny>>() {
                             self.input_types = Box::new(Types::from(iterate_types(list)));
                         }}}}
         }       
@@ -171,7 +208,7 @@ impl Block for PyBlock {
             if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
                 if let Ok(output_types) = module.get("outputTypes") {
                     if let Ok(ares) = output_types.call1(PyTuple::new(py, vec![self.instance.clone_ref(py)])) {
-                        if let Ok(list) = ares.extract::<Vec<&str>>() {
+                        if let Ok(list) = ares.extract::<Vec<&PyAny>>() {
                             self.output_types = Box::new(Types::from(iterate_types(list)));
                         }}}}
         }       
