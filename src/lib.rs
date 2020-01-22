@@ -25,6 +25,7 @@ use chainblocks::types::BaseArray;
 use chainblocks::types::Types;
 use chainblocks::types::Type;
 use chainblocks::types::Var;
+use chainblocks::types::OwnedVar;
 use chainblocks::types::Context;
 use chainblocks::types::ParameterInfo;
 use chainblocks::types::Parameters;
@@ -37,6 +38,7 @@ use std::path::Path;
 use std::fs;
 use std::convert::TryFrom;
 use std::ffi::CString;
+use std::ffi::CStr;
 
 fn convert_using_into_raw_parts<T, U>(v: Vec<T>) -> Vec<U> {
     let (ptr, len, cap) = v.into_raw_parts();
@@ -44,7 +46,7 @@ fn convert_using_into_raw_parts<T, U>(v: Vec<T>) -> Vec<U> {
 }
 
 #[repr(transparent)] // force it same size of original
-struct MyVar(Var);
+struct MyVar(OwnedVar);
 #[repr(transparent)] // force it same size of original
 struct MyVarRef<'a>(&'a Var);
 
@@ -53,26 +55,26 @@ impl pyo3::FromPyObject<'_> for MyVar {
                -> std::result::Result<Self, pyo3::PyErr> {
         if let Ok(v) = o.downcast_ref::<PyInt>() {
             let value: i64 = v.extract().unwrap();
-            Ok(MyVar(Var::from(value)))
+            Ok(MyVar(OwnedVar::from(value)))
         } else if let Ok(v) = o.downcast_ref::<PyLong>() {
             let value: i64 = v.extract().unwrap();
-            Ok(MyVar(Var::from(value)))
+            Ok(MyVar(OwnedVar::from(value)))
         } else if let Ok(v) = o.downcast_ref::<PyFloat>() {
             let value: f64 = v.extract().unwrap();
-            Ok(MyVar(Var::from(value)))
+            Ok(MyVar(OwnedVar::from(value)))
         } else if let Ok(v) = o.downcast_ref::<PyString>() {
             let value: &[u8] = v.as_bytes().unwrap();
-            let cbstr = value.as_ptr() as chainblocks::types::String;
-            Ok(MyVar(Var::from(cbstr)))
+            let cstr = CStr::from_bytes_with_nul(value).unwrap();
+            Ok(MyVar(OwnedVar::from(cstr)))
         } else if let Ok(v) = o.downcast_ref::<PyBool>() {
             let value: bool = v.extract().unwrap();
-            Ok(MyVar(Var::from(value)))
+            Ok(MyVar(OwnedVar::from(value)))
         } else if let Ok(v) = o.downcast_ref::<PyList>() {
             let value: Vec<MyVar> = v.extract().unwrap();
             let vec = convert_using_into_raw_parts::<MyVar, Var>(value);
-            Ok(MyVar(Var::from(vec)))
+            Ok(MyVar(OwnedVar::from(vec)))
         } else {
-            Ok(MyVar(Var::from(())))
+            Ok(MyVar(OwnedVar::from(())))
         }
     }
 }
@@ -108,6 +110,7 @@ struct PyBlock {
     instance: PyObject,
     activate: Option<PyObject>,
     result: Option<PyObject>,
+    output: MyVar,
     script_path: Option<CString>,
 }
 
@@ -130,6 +133,7 @@ impl Default for PyBlock {
             instance: PyDict::new(py).to_object(py),
             activate: None,
             result: None,
+            output: MyVar(OwnedVar::from(())),
             script_path: None,
         }
     }
@@ -306,11 +310,11 @@ impl Block for PyBlock {
         match ares {
             Ok(output) => {
                 // convert/extract
-                let res: MyVar = output.extract(py).unwrap();
+                self.output = output.extract(py).unwrap();
                 // store result to keep refs
                 // also will dec ref old one
                 self.result = Some(output);
-                res.0
+                (self.output.0).0
             }
             Err(err) => {
                 err.print(py);
