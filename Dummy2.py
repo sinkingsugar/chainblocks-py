@@ -4,6 +4,11 @@ this = sys.modules[__name__]
 # for now chainblocks will reload the script for every block we have
 # so to do a single global init let's use this trick
 # this might change in the future
+
+# if virtualenv
+# activate_this = "/Users/sugar/.virtualenvs/pytrading/bin/activate_this.py"
+# exec(open(activate_this).read(), {'__file__': activate_this})
+
 if not 'init_done' in locals():
     print("Dummy block loaded!")
     this.init_done = True
