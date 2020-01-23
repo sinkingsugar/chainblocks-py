@@ -142,15 +142,20 @@ impl Default for PyBlock {
 fn match_type(t: &PyAny) -> Type {
     if let Ok(name) = t.extract::<&str>() {
         match name {
-            "String" => { common_type::string }
             "None" => { common_type::none }
             "Any" => { common_type::any }
             "Int" => { common_type::int }
+            "Float" => { common_type::float }
+            "Bool" => { common_type::bool }
+            "String" => { common_type::string }
             _=> { unimplemented!(); }
         }
     } else if let Ok(list) = t.extract::<Vec<&str>>() {
         match list.as_slice() {
             ["Int"] => { common_type::ints }
+            ["Float"] => { common_type::floats }
+            ["Bool"] => { common_type::bools }
+            ["String"] => { common_type::strings }
             _ => { unimplemented!(); }
         }
     } else if let Ok(_list) = t.extract::<Vec<&PyAny>>() {
