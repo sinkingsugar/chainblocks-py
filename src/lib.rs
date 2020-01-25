@@ -21,7 +21,6 @@ use pyo3::types::PyModule;
 use pyo3::types::PyList;
 use pyo3::types::PyBool;
 use chainblocks::core::Core;
-use chainblocks::types::BaseArray;
 use chainblocks::types::Types;
 use chainblocks::types::Type;
 use chainblocks::types::Var;
@@ -32,8 +31,8 @@ use chainblocks::types::Parameters;
 use chainblocks::types::common_type;
 use chainblocks::core::registerBlock;
 use chainblocks::core::getRootPath;
-use chainblocks::block::Block;
 use chainblocks::core::init;
+use chainblocks::block::Block;
 use std::path::Path;
 use std::fs;
 use std::convert::TryFrom;
@@ -91,7 +90,7 @@ impl pyo3::ToPyObject for MyVarRef<'_> {
             v.to_object(py)
         } else if let Ok(v) = bool::try_from(self.0) {
             v.to_object(py)
-        } else if let Ok(v) = Vec::<Var>::try_from(self.0) {
+        } else if let Ok(v) = <&[Var]>::try_from(self.0) {
             let mut pov = Vec::<PyObject>::new();
             for var in v {
                 let mv = MyVarRef(&var);
