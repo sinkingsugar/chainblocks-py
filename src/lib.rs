@@ -1,6 +1,4 @@
 #![allow(unused_imports)]
-#![feature(vec_into_raw_parts)]
-
 #[macro_use]
 extern crate chainblocks;
 extern crate ctor;
@@ -38,45 +36,8 @@ use std::ffi::CString;
 use std::fs;
 use std::path::Path;
 
-fn convert_using_into_raw_parts<T, U>(v: Vec<T>) -> Vec<U> {
-    let (ptr, len, cap) = v.into_raw_parts();
-    unsafe { Vec::from_raw_parts(ptr as *mut U, len, cap) }
-}
-
-#[repr(transparent)] // force it same size of original
-struct MyVar(OwnedVar);
 #[repr(transparent)] // force it same size of original
 struct MyVarRef<'a>(&'a Var);
-
-impl pyo3::FromPyObject<'_> for MyVar {
-    fn extract(o: &'_ pyo3::types::PyAny) -> std::result::Result<Self, pyo3::PyErr> {
-        if let Ok(v) = o.downcast_ref::<PyInt>() {
-            let value: i64 = v.extract().unwrap();
-            Ok(MyVar(OwnedVar::from(value)))
-        } else if let Ok(v) = o.downcast_ref::<PyLong>() {
-            let value: i64 = v.extract().unwrap();
-            Ok(MyVar(OwnedVar::from(value)))
-        } else if let Ok(v) = o.downcast_ref::<PyFloat>() {
-            let value: f64 = v.extract().unwrap();
-            Ok(MyVar(OwnedVar::from(value)))
-        } else if let Ok(v) = o.downcast_ref::<PyString>() {
-            unsafe {
-                let value: &[u8] = v.as_bytes().unwrap();
-                let cstr = CStr::from_bytes_with_nul_unchecked(value);
-                Ok(MyVar(OwnedVar::from(cstr)))
-            }
-        } else if let Ok(v) = o.downcast_ref::<PyBool>() {
-            let value: bool = v.extract().unwrap();
-            Ok(MyVar(OwnedVar::from(value)))
-        } else if let Ok(v) = o.downcast_ref::<PyList>() {
-            let value: Vec<MyVar> = v.extract().unwrap();
-            let vec = convert_using_into_raw_parts::<MyVar, Var>(value);
-            Ok(MyVar(OwnedVar::from(vec)))
-        } else {
-            Ok(MyVar(OwnedVar::from(())))
-        }
-    }
-}
 
 impl pyo3::ToPyObject for MyVarRef<'_> {
     fn to_object(&self, py: pyo3::Python<'_>) -> pyo3::PyObject {
@@ -108,8 +69,9 @@ struct PyBlock {
     module: Option<PyObject>,
     instance: PyObject,
     activate: Option<PyObject>,
-    output: MyVar,
     script_path: Option<CString>,
+    result: Option<PyObject>,
+    result_seq: Vec<Var>,
 }
 
 impl Default for PyBlock {
@@ -127,8 +89,9 @@ impl Default for PyBlock {
             module: None,
             instance: PyDict::new(py).to_object(py),
             activate: None,
-            output: MyVar(OwnedVar::from(())),
             script_path: None,
+            result: None,
+            result_seq: vec![],
         }
     }
 }
@@ -189,6 +152,38 @@ fn iterate_params(list: &PyList) -> Vec<ParameterInfo> {
         }
     }
     params
+}
+
+impl PyBlock {
+    fn to_var(&mut self, py: pyo3::Python, o: PyObject) -> Var {
+        if let Ok(v) = o.cast_as::<PyBool>(py) {
+            let value: bool = v.extract().unwrap();
+            Var::from(value)
+        } else if let Ok(v) = o.cast_as::<PyInt>(py) {
+            let value: i64 = v.extract().unwrap();
+            Var::from(value)
+        } else if let Ok(v) = o.cast_as::<PyLong>(py) {
+            let value: i64 = v.extract().unwrap();
+            Var::from(value)
+        } else if let Ok(v) = o.cast_as::<PyFloat>(py) {
+            let value: f64 = v.extract().unwrap();
+            Var::from(value)
+        } else if let Ok(v) = o.cast_as::<PyString>(py) {
+            unsafe {
+                let value: &[u8] = v.as_bytes().unwrap();
+                let cstr = CStr::from_bytes_with_nul_unchecked(value);
+                Var::from(cstr)
+            }
+        } else if let Ok(v) = o.cast_as::<PyList>(py) {
+            for value in v {
+                let var = self.to_var(py, value.to_object(py));
+                self.result_seq.push(var)
+            }
+            Var::from(&self.result_seq)
+        } else {
+            Var::default()
+        }
+    }
 }
 
 impl Block for PyBlock {
@@ -318,7 +313,7 @@ impl Block for PyBlock {
     fn getParam(&mut self, idx: i32) -> Var {
         match idx {
             0 => Var::from(self.script_path.as_ref()),
-            _ => Var::from(()),
+            _ => todo!(),
         }
     }
 
@@ -332,14 +327,17 @@ impl Block for PyBlock {
             PyTuple::new(py, vec![self.instance.clone_ref(py), arg.to_object(py)]),
         );
         match ares {
-            Ok(output) => {
-                // convert/extract
-                self.output = output.extract(py).unwrap();
-                (self.output.0).0
+            Ok(o) => {
+                // clear previous activation garbage
+                self.result_seq.clear();
+                // store/replace result
+                self.result = Some(o.clone_ref(py));
+                // finally convert
+                self.to_var(py, o)
             }
             Err(err) => {
                 err.print(py);
-                Var::default()
+                panic!("Py activation failed!")
             }
         }
     }
