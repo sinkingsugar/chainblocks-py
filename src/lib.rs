@@ -1,3 +1,6 @@
+// On windows build with something like
+// PYTHON_SYS_EXECUTABLE=C:/Python38/python.exe LIB=C:/Python38/Libs/python38.lib cargo +nightly build
+
 #![allow(unused_imports)]
 #[macro_use]
 extern crate chainblocks;
@@ -11,7 +14,6 @@ use chainblocks::core::registerBlock;
 use chainblocks::core::Core;
 use chainblocks::types::common_type;
 use chainblocks::types::Context;
-use chainblocks::types::OwnedVar;
 use chainblocks::types::ParameterInfo;
 use chainblocks::types::Parameters;
 use chainblocks::types::Type;
@@ -313,7 +315,36 @@ impl Block for PyBlock {
     fn getParam(&mut self, idx: i32) -> Var {
         match idx {
             0 => Var::from(self.script_path.as_ref()),
-            _ => todo!(),
+            _ => {
+                let gil = pyo3::Python::acquire_gil();
+                let py = gil.python();
+                let mut res = Var::default();
+                if self.module.is_some() {
+                    if let Ok(module) = self.module.as_ref().unwrap().cast_as::<PyModule>(py) {
+                        if let Ok(output_types) = module.get("getParam") {
+                            let pres = PyObject::from(output_types).call1(
+                                py,
+                                PyTuple::new(
+                                    py,
+                                    vec![self.instance.clone_ref(py), idx.to_object(py)],
+                                ),
+                            );
+                            match pres {
+                                Ok(o) => {
+                                    // Notice we recycle activation result here!
+                                    self.result_seq.clear();
+                                    self.result = Some(o.clone_ref(py));
+                                    res = self.to_var(py, o);
+                                }
+                                Err(err) => {
+                                    err.print(py);
+                                }
+                            }
+                        }
+                    }
+                }
+                res
+            }
         }
     }
 
